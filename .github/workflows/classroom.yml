@@ -161,27 +161,47 @@ jobs:
               expect(fb).toMatch(/win|correct|you.*got/i);
             });
 
-            test("tries counter increments across two valid guesses in one session", async () => {
-              // Read starting value (treat missing/NaN as 0)
-              const start = toNumOrZero(textOf(document, 'tries'));
+            test("tries counter updates visibly across two valid guesses (format-agnostic)", async () => {
+            // Helper to read both text and optional numeric value
+            function readTries(document) {
+              const el = document.getElementById('tries');
+              const text = (el?.textContent || el?.innerText || '').trim();
+              const m = text.match(/-?\d+/);     // first integer token if present
+              const num = m ? Number(m[0]) : null;
+              return { text, num };
+            }
 
-              // First valid guess (10). Some students only increment on win; that's ok.
-              expect(setValue(window, document, 'guess', 10)).toBe(true);
-              callRun(window);
-              await wait();
+            // Start snapshot
+            const t0 = readTries(document);
 
-              // Second valid guess (1 – correct)
-              expect(setValue(window, document, 'guess', 1)).toBe(true);
-              callRun(window);
-              await wait();
+            // First valid guess (10 — high). Some students only increment on win; that's ok.
+            expect(setValue(window, document, 'guess', 10)).toBe(true);
+            callRun(window);
+            await wait();
+            const t1 = readTries(document);
 
-              const after = toNumOrZero(textOf(document, 'tries'));
+            // Second valid guess (1 — correct)
+            expect(setValue(window, document, 'guess', 1)).toBe(true);
+            callRun(window);
+            await wait();
+            const t2 = readTries(document);
 
-              // Be tolerant: require at least +1 across the two valid guesses
-              expect(after).toBeGreaterThanOrEqual(start + 1);
-              // Also require final displayed tries to be >= 1 (guards against resets)
-              expect(after).toBeGreaterThanOrEqual(1);
-            });
+            // 1) The display should change by the end of two valid guesses.
+            expect(t2.text).not.toBe(t0.text);
+
+            // 2) If both ends are numeric, require at least +1 overall.
+            if (t0.num !== null && t2.num !== null && Number.isFinite(t0.num) && Number.isFinite(t2.num)) {
+              expect(t2.num).toBeGreaterThanOrEqual(t0.num + 1);
+            } else {
+              // 3) Otherwise, be format-agnostic: require that final text contains a digit.
+              //    (Covers cases like "Tries: 1" vs. "1", and avoids NaN pitfalls.)
+              expect(/\d/.test(t2.text)).toBe(true);
+            }
+
+            // 4) Also assert that the win attempt caused a visible update compared to after the first guess.
+            //    (Supports solutions that only bump the counter on the winning guess.)
+            expect(t2.text).not.toBe(t1.text);
+          });
 
             test("for-loop task: #hintList shows 1..10 (at load OR after first run)", async () => {
               const el = document.getElementById('hintList');
