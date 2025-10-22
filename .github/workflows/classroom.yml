@@ -228,7 +228,7 @@ jobs:
           name: jest-results
           path: jest-results.json
 
-      - name: Summarize results for students
+      - name: Summarize results for students 
         if: always()
         run: |
           node - <<'NODE'
