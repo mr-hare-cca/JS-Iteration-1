@@ -31,5 +31,5 @@ function runJS() {
     feedback.textContent = "Too high.";
   } else {
     feedback.textContent = "Too low.";
-  }
+  } 
 }
