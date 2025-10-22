@@ -42,7 +42,7 @@ jobs:
           };
           EOF
 
-      - name: Create Jest tests (simple: one function runJS, no listeners)
+      - name: Create Jest tests (one function runJS, no listeners)
         run: |
           mkdir -p __tests__
           cat > __tests__/guessing.test.cjs <<'EOF'
