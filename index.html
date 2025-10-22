@@ -6,7 +6,16 @@
     <script src="script.js"></script>
 </head>
 <body>
-    <h1>Your html goes here...</h1>
-    <br>See the <a href="README.md">README</a> for project details
+  <h1>Guess the Number (1–10)</h1>
+
+  <label>Enter your guess:</label>
+  <input id="guess" type="number" min="1" max="10">
+  <button onclick="runJS()">Guess</button>
+
+  <p id="feedback"></p>
+  <p>Tries: <span id="tries">0</span></p>
+
+  <h3>Hints (1–10)</h3>
+  <ul id="hintList"></ul>
 </body>
 </html>
