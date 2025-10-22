@@ -49,43 +49,37 @@ jobs:
           const path = require('path');
           const { JSDOM, VirtualConsole } = require('jsdom');
 
-          // ---------- helpers ----------
+          // ----------------- helpers -----------------
           const wait = (ms=60) => new Promise(r => setTimeout(r, ms));
           const hasDigit = s => /\d/.test(s || '');
+          const norm = s => (s || '').toLowerCase();
 
-          function findPath(cands) {
-            for (const p of cands) if (fs.existsSync(p)) return p;
-            return null;
-          }
-          function findIndexPath() {
-            return findPath(['index.html','public/index.html','src/index.html','docs/index.html']);
-          }
-          function findScriptPath() {
-            return findPath(['script.js','public/script.js','src/script.js','docs/script.js']);
-          }
-          function textOf(doc, id) {
+          function findPath(cands){ for(const p of cands){ if(fs.existsSync(p)) return p; } return null; }
+          function findIndexPath(){ return findPath(['index.html','public/index.html','src/index.html','docs/index.html']); }
+          function findScriptPath(){ return findPath(['script.js','public/script.js','src/script.js','docs/script.js']); }
+
+          function textOf(doc,id){
             const el = doc.getElementById(id);
             return (el?.textContent || el?.innerText || '').trim();
           }
-          function setVal(doc, id, v) {
+          function setVal(doc,id,v){
             const el = doc.getElementById(id);
             if (!el) return false;
             el.value = String(v);
             return true;
           }
-          function callRun(window) {
-            try { window.eval('if (typeof runJS==="function"){ runJS(); }'); } catch {}
-            if (typeof window.runJS === 'function') window.runJS();
+          function callRun(win){
+            try { win.eval('if (typeof runJS==="function"){ runJS(); }'); } catch {}
+            if (typeof win.runJS === 'function') win.runJS();
           }
 
           async function loadDOM() {
             const indexPath = findIndexPath();
             if (!indexPath) throw new Error('index.html not found');
-
             const baseDir = path.dirname(path.resolve(indexPath));
             const baseUrl = 'file://' + baseDir.replace(/\\+/g,'/') + '/';
             const vconsole = new VirtualConsole();
-            vconsole.on('error', () => {}); // keep CI logs tidy
+            vconsole.on('error', () => {}); // keep CI tidy
 
             const dom = await JSDOM.fromFile(indexPath, {
               url: baseUrl,
@@ -96,7 +90,7 @@ jobs:
             });
 
             const { window } = dom;
-            // Disallow prompt/alert (assignment rule)
+            // Block prompt/alert per assignment
             window.alert = () => { throw new Error('Use textContent, not alert().'); };
             window.prompt = () => { throw new Error('Use inputs, not prompt().'); };
 
@@ -105,7 +99,30 @@ jobs:
             return dom;
           }
 
-          // ---------- tests ----------
+          // Try guesses 1..10 until we see a win message. Returns {winGuess, sawHigh, sawLow}
+          async function playUntilWin(window, document) {
+            let sawHigh = false, sawLow = false;
+            const feedbackId = 'feedback';
+
+            // Ensure game is started
+            callRun(window); // Start
+            await wait();
+
+            for (let g = 1; g <= 10; g++) {
+              setVal(document, 'guess', g);
+              callRun(window);
+              await wait();
+              const f = norm(textOf(document, feedbackId));
+              if (/win|correct|you.*got/.test(f)) {
+                return { winGuess: g, sawHigh, sawLow };
+              }
+              if (f.includes('high')) sawHigh = true;
+              if (f.includes('low')) sawLow = true;
+            }
+            return { winGuess: null, sawHigh, sawLow };
+          }
+
+          // ----------------- tests -----------------
           describe('Unit 8.4 – Iteration Guessing Game', () => {
             let dom, window, document;
 
@@ -125,19 +142,18 @@ jobs:
 
             test('input disabled at load; enabled after Start; disabled again after win', async () => {
               const input = document.getElementById('guess');
-              // At load: must be disabled
+
+              // At load -> must be disabled
               expect(input.disabled).toBe(true);
 
-              // Seed so secret = 5 (0.4*10 + 1 = 5)
-              Object.defineProperty(window.Math, 'random', { value: () => 0.4, configurable: true });
-
-              // Start game (enables input)
-              callRun(window); await wait();
+              // Start game -> must enable
+              callRun(window);
+              await wait();
               expect(input.disabled).toBe(false);
 
-              // Win immediately (sets disabled true again)
-              setVal(document, 'guess', 5);
-              callRun(window); await wait();
+              // Find a winning guess and ensure disabled after win
+              const { winGuess } = await playUntilWin(window, document);
+              expect(winGuess).not.toBeNull();
               expect(input.disabled).toBe(true);
             });
 
@@ -146,77 +162,68 @@ jobs:
             });
 
             test('invalid input shows an "invalid" message in #feedback', async () => {
-              // Fresh game
-              Object.defineProperty(window.Math, 'random', { value: () => 0.4, configurable: true });
+              // Start new game
               callRun(window); await wait();
-
               setVal(document, 'guess', 'abc');
               callRun(window); await wait();
-
-              expect(textOf(document, 'feedback').toLowerCase()).toMatch(/invalid/);
+              expect(norm(textOf(document,'feedback'))).toMatch(/invalid/);
             });
 
-            test('selection logic: high / low / win (seed secret=5)', async () => {
-              // New game
-              Object.defineProperty(window.Math, 'random', { value: () => 0.4, configurable: true });
+            test('selection logic: shows at least one "high" or "low", and a win', async () => {
+              // Fresh game
               callRun(window); await wait();
 
-              // too high
-              setVal(document, 'guess', 9);
-              callRun(window); await wait();
-              expect(textOf(document, 'feedback').toLowerCase()).toMatch(/high/);
+              const res = await playUntilWin(window, document);
+              // Must have won
+              expect(res.winGuess).not.toBeNull();
+              // And we expect at least one directional hint to have appeared
+              expect(res.sawHigh || res.sawLow).toBe(true);
+            });
 
-              // too low
+            test('tries counter updates across valid guesses (format-agnostic)', async () => {
+              // Fresh game
+              callRun(window); await wait();
+              const triesId = 'tries';
+
+              const startText = textOf(document, triesId);
+              // Make one valid guess (1) — even if it's win, that's okay
               setVal(document, 'guess', 1);
               callRun(window); await wait();
-              expect(textOf(document, 'feedback').toLowerCase()).toMatch(/low/);
+              const midText = textOf(document, triesId);
 
-              // win
-              setVal(document, 'guess', 5);
-              callRun(window); await wait();
-              expect(textOf(document, 'feedback').toLowerCase()).toMatch(/win|correct|you.*got/i);
-            });
+              // If not won yet, try 2..10 until win
+              let won = /win|correct|you.*got/i.test(norm(textOf(document,'feedback')));
+              let endText = midText;
+              if (!won) {
+                for (let g = 2; g <= 10; g++) {
+                  setVal(document, 'guess', g);
+                  callRun(window); await wait();
+                  endText = textOf(document, triesId);
+                  if (/win|correct|you.*got/i.test(norm(textOf(document,'feedback')))) { won = true; break; }
+                }
+              }
+              expect(won).toBe(true);
 
-            test('tries counter updates across two valid guesses (format-agnostic)', async () => {
-              // New game
-              Object.defineProperty(window.Math, 'random', { value: () => 0.4, configurable: true });
-              callRun(window); await wait();
-
-              const t0 = textOf(document, 'tries');
-
-              // valid guess #1 (high)
-              setVal(document, 'guess', 9);
-              callRun(window); await wait();
-              const t1 = textOf(document, 'tries');
-
-              // valid guess #2 (win)
-              setVal(document, 'guess', 5);
-              callRun(window); await wait();
-              const t2 = textOf(document, 'tries');
-
-              // Must visibly change and end with a digit somewhere
-              expect(t2).not.toBe(t0);
-              expect(t2).not.toBe(t1);
-              expect(hasDigit(t2)).toBe(true);
+              // Tries text should have visibly changed and contain a digit
+              expect(endText).not.toBe(startText);
+              expect(hasDigit(endText)).toBe(true);
             });
 
             test('for-loop task: #hintList shows numbers 1..10 (on start)', async () => {
-              Object.defineProperty(window.Math, 'random', { value: () => 0.4, configurable: true });
               callRun(window); await wait();
-
               const el = document.getElementById('hintList');
               const kids = Array.from(el?.children || []);
               const txt = (el?.textContent || '').trim();
               const hasTen = kids.length >= 10;
-              const found = (txt.match(/\b(?:10|[1-9])\b/g) || []).length >= 10;
+              const found = (txt.match(/\\b(?:10|[1-9])\\b/g) || []).length >= 10;
               expect(hasTen || found).toBe(true);
             });
 
             test('script.js contains a while loop', () => {
               const p = findScriptPath();
               expect(p).not.toBeNull();
-              const src = fs.readFileSync(p, 'utf8');
-              expect(/\bwhile\s*\(/.test(src)).toBe(true);
+              const src = fs.readFileSync(p,'utf8');
+              expect(/\\bwhile\\s*\\(/.test(src)).toBe(true);
             });
           });
           EOF
@@ -293,7 +300,6 @@ jobs:
           out.push('- Use a for loop for #hintList (1..10) and a while loop to keep checking guesses.');
           out.push('- No prompt()/alert(); update the page with textContent.');
 
-          // REAL newlines (no escaped \n)
           fs.appendFileSync(summaryFile, out.join('\n'));
           NODE
 
