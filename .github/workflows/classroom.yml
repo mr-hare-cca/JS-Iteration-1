@@ -40,28 +40,28 @@ jobs:
           if (typeof global.TextDecoder === 'undefined') global.TextDecoder = TextDecoder;
           EOF
 
-      - name: Create Jest config
+      - name: Create Jest config (match only *.test.cjs)
         run: |
           cat > jest.config.cjs <<'EOF'
           module.exports = {
             testEnvironment: 'jsdom',
             setupFiles: ['<rootDir>/jest.setup.cjs'],
-            // Keep this simple and guaranteed to match .cjs tests we create
-            testMatch: ['**/__tests__/**/*.cjs']
+            testMatch: ['**/__tests__/**/*.test.cjs']
           };
           EOF
 
-      - name: Create Jest tests (main + sanity)
+      - name: Create Jest tests (sanity + main)
         run: |
           mkdir -p __tests__
-          # --- sanity test so we never get 0/0 ---
+
+          # --- sanity test (ensures not 0/0) ---
           cat > __tests__/sanity.test.cjs <<'EOF'
           test('sanity: jest is running', () => {
             expect(true).toBe(true);
           });
           EOF
 
-          # --- main guessing game tests (secret-agnostic) ---
+          # --- guessing game tests (secret-agnostic) ---
           cat > __tests__/guessing.test.cjs <<'EOF'
           const fs = require('fs');
           const path = require('path');
@@ -82,7 +82,7 @@ jobs:
           async function loadDOM() {
             const idx = findIndexPath();
             const vconsole = new VirtualConsole();
-            vconsole.on('error', () => {});
+            vconsole.on('error', () => {}); // keep CI noise down
 
             if (!idx) {
               // Minimal DOM so tests fail gracefully instead of killing Jest
@@ -142,7 +142,7 @@ jobs:
             beforeAll(async () => {
               dom = await loadDOM();
               window = dom.window;
-              document = window.document;
+              document = dom.window.document;
             });
 
             test('has required elements (#guess, #feedback, #tries, #hintList) and button', () => {
@@ -215,7 +215,7 @@ jobs:
               const kids = Array.from(el.children || []);
               const txt = (el.textContent || '').trim();
               const hasTen = kids.length >= 10;
-              const found = (txt.match(/\\b(?:10|[1-9])\\b/g) || []).length >= 10;
+              const found = (txt.match(/\b(?:10|[1-9])\b/g) || []).length >= 10;
               expect(hasTen || found).toBe(true);
             });
 
@@ -223,19 +223,23 @@ jobs:
               const p = findScriptPath();
               if (!p) throw new Error('script.js not found (root/public/src/docs).');
               const src = fs.readFileSync(p,'utf8');
-              expect(/\\bwhile\\s*\\(/.test(src)).toBe(true);
+              // CORRECT regex literal (single backslashes):
+              expect(/\bwhile\s*\(/.test(src)).toBe(true);
             });
           });
           EOF
+
+      - name: List discovered tests (debug)
+        run: npx jest --listTests
 
       - name: Run tests (always produce JSON)
         id: jest
         continue-on-error: true
         run: |
-          npx jest --runInBand --json --outputFile=jest-results.json || true
+          npx jest --runInBand --json --outputFile=jest-results.json
           echo "Jest exit code: $?"
           echo "--- jest-results.json (head) ---"
-          head -c 500 jest-results.json || echo "(no jest-results.json created)"
+          head -c 800 jest-results.json || echo "(no jest-results.json created)"
 
       - name: Upload raw results
         if: always()
@@ -298,7 +302,7 @@ jobs:
           out.push('### Reminders');
           out.push('- One button calls runJS(): start → guess → win → reset.');
           out.push('- Input #guess is disabled until start; disabled again after win.');
-          out.push('- Use a for loop for #hintList (1..10) and a while loop to keep checking guesses.');
+          out.push('- Use a for loop for #hintList (1–10) and a while loop to keep checking guesses.');
           out.push('- No prompt()/alert(); update the page with textContent.');
 
           fs.appendFileSync(summary, out.join('\n'));
