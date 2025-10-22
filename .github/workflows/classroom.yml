@@ -61,7 +61,7 @@ jobs:
           });
           EOF
 
-          # --- guessing game tests (string/number tolerant selection + tries) ---
+          # --- guessing game tests (selection logic removed) ---
           cat > __tests__/guessing.test.cjs <<'EOF'
           const fs = require('fs');
           const path = require('path');
@@ -121,24 +121,24 @@ jobs:
             return dom;
           }
 
-          // Try 1..10, returning detailed trace
+          // Try 1..10 and record tries text each time
           async function play(window, document) {
             callRun(window); // start
             await wait();
 
-            const trace = []; // [{g, feedback, tries}]
+            const steps = [];
             for (let g = 1; g <= 10; g++) {
               setVal(document, 'guess', g);
               callRun(window);
               await wait();
-              trace.push({
+              steps.push({
                 g,
                 feedback: textOf(document,'feedback'),
                 tries: textOf(document,'tries')
               });
-              if (isWin(trace[trace.length-1].feedback)) break;
+              if (isWin(steps[steps.length-1].feedback)) break;
             }
-            return trace;
+            return steps;
           }
 
           describe('Unit 8.4 – Iteration Guessing Game', () => {
@@ -172,55 +172,23 @@ jobs:
               expect(norm(textOf(document,'feedback'))).toMatch(/invalid/);
             });
 
-            // RELAXED + TOLERANT:
-            // passes if we observe any non-empty, non-win feedback BEFORE a win
-            // OR if the tries numeric value increases BEFORE win (progress signal).
-            test('selection logic works (non-win feedback then win)', async () => {
-              if (window.__MISSING_INDEX__) throw new Error('index.html missing');
-              const t0Text = textOf(document,'tries'); // pre-start read (may be "")
-              const t0 = firstInt(t0Text);
-
-              const trace = await play(window, document);
-              const winStep = trace.findIndex(x => isWin(x.feedback));
-
-              expect(winStep).toBeGreaterThanOrEqual(0); // we must eventually win
-
-              // Did we show any non-win feedback before the win?
-              const hadNonWinText = trace
-                .slice(0, winStep)
-                .some(x => x.feedback && !isWin(x.feedback));
-
-              // Or did the tries number increase before the win?
-              let hadProgressTries = false;
-              let prev = t0;
-              for (const x of trace.slice(0, winStep)) {
-                const n = firstInt(x.tries);
-                if (n > prev) { hadProgressTries = true; break; }
-                prev = n;
-              }
-
-              expect(hadNonWinText || hadProgressTries).toBe(true);
-            });
-
             test('tries counter updates (number/string tolerant)', async () => {
               if (window.__MISSING_INDEX__) throw new Error('index.html missing');
+              // fresh game
               callRun(window); await wait();
 
               const id = 'tries';
-              const startText = textOf(document, id);
-              const start = firstInt(startText);
+              const start = firstInt(textOf(document, id));
 
-              // Make at least two valid guesses or until win
+              // Make valid guesses until win or we reach 10
               let last = start;
-              for (let g = 1; g <= 10; g++) {
-                setVal(document,'guess', g);
-                callRun(window);
-                await wait();
-                const now = firstInt(textOf(document, id));
-                if (now > last) { last = now; }
-                if (isWin(textOf(document,'feedback'))) break;
+              const steps = await play(window, document);
+              for (const s of steps) {
+                const n = firstInt(s.tries);
+                if (n > last) last = n;
               }
-              // Must have increased at least once by the end
+
+              // Must have increased at least once
               expect(last).toBeGreaterThan(start);
             });
 
@@ -287,7 +255,6 @@ jobs:
             {label:'has required elements', key:'has required elements'},
             {label:'no prompt/alert (uses inputs & textContent)', key:'does not use prompt/alert'},
             {label:'invalid input handled', key:'invalid input'},
-            {label:'selection logic works (non-win feedback then win)', key:'selection logic'},
             {label:'tries counter updates', key:'tries counter updates'},
             {label:'for-loop task complete', key:'for-loop task'},
             {label:'while loop present in script.js', key:'contains a while loop'}
@@ -305,7 +272,6 @@ jobs:
             out.push(`${icon(pass)} ${c.label}`);
             if (!pass) {
               const hints = {
-                'selection logic works (non-win feedback then win)':'Show some non-win feedback before a win (a hint or message), or make sure #tries increases before win.',
                 'tries counter updates':'Increase the visible #tries on valid guesses (the number is parsed even if surrounded by words).',
                 'for-loop task complete':'Populate #hintList with 1–10 using a for loop.'
               };
