@@ -49,25 +49,27 @@ jobs:
           const path = require('path');
           const { JSDOM, VirtualConsole } = require('jsdom');
 
-          function findIndexPath() {
-            const candidates = ['index.html', 'public/index.html', 'src/index.html', 'docs/index.html'];
-            for (const c of candidates) if (fs.existsSync(c)) return c;
+          function findPath(cands) {
+            for (const p of cands) if (fs.existsSync(p)) return p;
             return null;
           }
 
-          async function wait(ms = 60) {
-            return new Promise(res => setTimeout(res, ms));
+          function findIndexPath() {
+            return findPath(['index.html','public/index.html','src/index.html','docs/index.html']);
           }
+          function findScriptPath() {
+            return findPath(['script.js','public/script.js','src/script.js','docs/script.js']);
+          }
+
+          async function wait(ms = 60) { return new Promise(r => setTimeout(r, ms)); }
 
           async function loadDOM() {
             const indexPath = findIndexPath();
             if (!indexPath) throw new Error("index.html not found");
-
             const baseDir = path.dirname(path.resolve(indexPath));
             const baseUrl = 'file://' + baseDir.replace(/\\+/g, '/') + '/';
             const vconsole = new VirtualConsole();
             vconsole.on('error', () => {});
-
             const dom = await JSDOM.fromFile(indexPath, {
               url: baseUrl,
               runScripts: 'dangerously',
@@ -75,14 +77,12 @@ jobs:
               pretendToBeVisual: true,
               virtualConsole: vconsole
             });
-
             const { window } = dom;
-            // Seed RNG so secret is 1
+            // Seed: secret = 1
             Object.defineProperty(window.Math, 'random', { value: () => 0, writable: false });
-            // Block prompt/alert per assignment rules
+            // Disallow prompts/alerts
             window.alert = () => { throw new Error('Use textContent, not alert().'); };
             window.prompt = () => { throw new Error('Use inputs, not prompt().'); };
-
             await new Promise(res => window.addEventListener('load', res, { once: true }));
             await wait();
             return dom;
@@ -94,36 +94,48 @@ jobs:
             el.value = String(val);
             return true;
           }
-
           function textOf(document, id) {
             const el = document.getElementById(id);
             return (el?.textContent || el?.innerText || '').trim();
           }
-
-          function toNumOrZero(s) {
-            const m = (s || '').match(/-?\\d+(?:\\.\\d+)?/);
-            return m ? Number(m[0]) : 0;
-          }
-
+          function hasDigit(s){ return /\d/.test(s || ''); }
           function callRun(window) {
             try { window.eval('if (typeof runJS==="function"){ runJS(); }'); } catch {}
             if (typeof window.runJS === 'function') window.runJS();
           }
 
           describe("Unit 8.4 – Iteration Guessing Game", () => {
-            let dom, window, document;
+            let dom, window, document, button;
 
             beforeAll(async () => {
               dom = await loadDOM();
               window = dom.window;
               document = window.document;
+              button = document.querySelector('button');
             });
 
-            test("has required elements (#guess, #feedback, #tries, #hintList)", () => {
+            test("has required elements (#guess, #feedback, #tries, #hintList) and button", () => {
               expect(document.getElementById('guess')).not.toBeNull();
               expect(document.getElementById('feedback')).not.toBeNull();
               expect(document.getElementById('tries')).not.toBeNull();
               expect(document.getElementById('hintList')).not.toBeNull();
+              expect(button).not.toBeNull();
+            });
+
+            test("input disabled at load; enabled after Start; disabled again after win", async () => {
+              const input = document.getElementById('guess');
+              expect(input.disabled).toBe(true);
+
+              // Start game
+              callRun(window);
+              await wait();
+              expect(input.disabled).toBe(false);
+
+              // Win path (secret seeded to 1): guess 1
+              setValue(window, document, 'guess', 1);
+              callRun(window);
+              await wait();
+              expect(input.disabled).toBe(true);
             });
 
             test("does not use prompt/alert (uses inputs + textContent)", () => {
@@ -131,98 +143,78 @@ jobs:
             });
 
             test("invalid input shows an 'invalid' message in #feedback", async () => {
-              expect(setValue(window, document, 'guess', 'abc')).toBe(true);
-              callRun(window);
-              await wait();
+              // Start
+              callRun(window); await wait();
+              setValue(window, document, 'guess', 'abc');
+              callRun(window); await wait();
               const fb = textOf(document, 'feedback').toLowerCase();
               expect(fb).toMatch(/invalid/);
             });
 
-            test("selection logic: too high / too low|invalid / win (seeded answer=1)", async () => {
-              // too high
-              expect(setValue(window, document, 'guess', 10)).toBe(true);
-              callRun(window);
-              await wait();
+            test("selection logic: high / low|invalid / win (seed=1)", async () => {
+              // Start (ensure new game)
+              callRun(window); await wait();
+
+              // high
+              setValue(window, document, 'guess', 10);
+              callRun(window); await wait();
               let fb = textOf(document, 'feedback').toLowerCase();
               expect(fb).toMatch(/high/);
 
-              // too low or invalid (0)
-              expect(setValue(window, document, 'guess', 0)).toBe(true);
-              callRun(window);
-              await wait();
+              // low or invalid (0)
+              setValue(window, document, 'guess', 0);
+              callRun(window); await wait();
               fb = textOf(document, 'feedback').toLowerCase();
               expect(fb).toMatch(/low|invalid/);
 
               // win (1)
-              expect(setValue(window, document, 'guess', 1)).toBe(true);
-              callRun(window);
-              await wait();
+              setValue(window, document, 'guess', 1);
+              callRun(window); await wait();
               fb = textOf(document, 'feedback').toLowerCase();
               expect(fb).toMatch(/win|correct|you.*got/i);
             });
 
             test("tries counter updates visibly across two valid guesses (format-agnostic)", async () => {
-            // Helper to read both text and optional numeric value
-            function readTries(document) {
-              const el = document.getElementById('tries');
-              const text = (el?.textContent || el?.innerText || '').trim();
-              const m = text.match(/-?\d+/);     // first integer token if present
-              const num = m ? Number(m[0]) : null;
-              return { text, num };
-            }
+              // Start
+              callRun(window); await wait();
+              const triesBefore = textOf(document, 'tries');
 
-            // Start snapshot
-            const t0 = readTries(document);
+              // First valid guess (10)
+              setValue(window, document, 'guess', 10);
+              callRun(window); await wait();
+              const afterFirst = textOf(document, 'tries');
 
-            // First valid guess (10 — high). Some students only increment on win; that's ok.
-            expect(setValue(window, document, 'guess', 10)).toBe(true);
-            callRun(window);
-            await wait();
-            const t1 = readTries(document);
+              // Second valid guess (1 - win)
+              setValue(window, document, 'guess', 1);
+              callRun(window); await wait();
+              const triesAfter = textOf(document, 'tries');
 
-            // Second valid guess (1 — correct)
-            expect(setValue(window, document, 'guess', 1)).toBe(true);
-            callRun(window);
-            await wait();
-            const t2 = readTries(document);
+              // must change at least once and end with a digit somewhere
+              expect(triesAfter).not.toBe(triesBefore);
+              expect(triesAfter).not.toBe(afterFirst);
+              expect(hasDigit(triesAfter)).toBe(true);
+            });
 
-            // 1) The display should change by the end of two valid guesses.
-            expect(t2.text).not.toBe(t0.text);
-
-            // 2) If both ends are numeric, require at least +1 overall.
-            if (t0.num !== null && t2.num !== null && Number.isFinite(t0.num) && Number.isFinite(t2.num)) {
-              expect(t2.num).toBeGreaterThanOrEqual(t0.num + 1);
-            } else {
-              // 3) Otherwise, be format-agnostic: require that final text contains a digit.
-              //    (Covers cases like "Tries: 1" vs. "1", and avoids NaN pitfalls.)
-              expect(/\d/.test(t2.text)).toBe(true);
-            }
-
-            // 4) Also assert that the win attempt caused a visible update compared to after the first guess.
-            //    (Supports solutions that only bump the counter on the winning guess.)
-            expect(t2.text).not.toBe(t1.text);
-          });
-
-            test("for-loop task: #hintList shows 1..10 (at load OR after first run)", async () => {
+            test("for-loop task: #hintList shows numbers 1..10 (on start or after first run)", async () => {
+              // Start
+              callRun(window); await wait();
               const el = document.getElementById('hintList');
-              const children0 = Array.from(el?.children || []);
-              let text0 = (el?.textContent || '').trim();
-              let ok = children0.length >= 10 || ((text0.match(/\\b(?:10|[1-9])\\b/g) || []).length >= 10);
+              const kids = Array.from(el?.children || []);
+              const txt = (el?.textContent || '').trim();
+              const hasTen = kids.length >= 10;
+              const found = (txt.match(/\\b(?:10|[1-9])\\b/g) || []).length >= 10;
+              expect(hasTen || found).toBe(true);
+            });
 
-              if (!ok) {
-                // Allow students who build the list inside runJS()
-                expect(setValue(window, document, 'guess', 5)).toBe(true);
-                callRun(window);
-                await wait();
-                const kids = Array.from(el?.children || []);
-                const txt = (el?.textContent || '').trim();
-                ok = kids.length >= 10 || ((txt.match(/\\b(?:10|[1-9])\\b/g) || []).length >= 10);
-              }
-              expect(ok).toBe(true);
+            test("script.js contains a while loop", () => {
+              const scriptPath = findScriptPath();
+              expect(scriptPath).not.toBeNull();
+              const src = fs.readFileSync(scriptPath, 'utf8');
+              // Require at least one while(...) occurrence
+              expect(/\bwhile\s*\(/.test(src)).toBe(true);
             });
           });
           EOF
-
 
       - name: Run tests
         id: jest
@@ -248,14 +240,18 @@ jobs:
           const all = (r.testResults || []).flatMap(t => t.assertionResults || []);
           const textOf = t => (t.title || t.fullName || '').toLowerCase();
           const passedBy = k => all.some(t => textOf(t).includes(k.toLowerCase()) && t.status === 'passed');
+
           const checks = [
-            {label:'has required elements', key:'has required elements', hint:'Include #guess, #feedback, #tries, #hintList.'},
-            {label:'no prompt/alert (uses inputs & textContent)', key:'does not use prompt/alert', hint:'Use input fields, not prompt or alert.'},
-            {label:'invalid input handled', key:'invalid input', hint:'Show “invalid” message for out-of-range.'},
-            {label:'selection logic works (low/high/win)', key:'selection logic', hint:'Compare guess vs answer and update feedback.'},
-            {label:'tries counter increments', key:'tries counter', hint:'Update #tries on valid guesses.'},
-            {label:'for-loop task complete', key:'for-loop task', hint:'Populate #hintList with 1–10 using a for loop (load or first run).'}
+            {label:'has required elements', key:'has required elements', hint:'Include #guess, #feedback, #tries, #hintList, and a button.'},
+            {label:'input disabled/enabled/disabled flow', key:'input disabled at load', hint:'Input disabled at load, enabled on Start, disabled again after win.'},
+            {label:'no prompt/alert (uses inputs & textContent)', key:'does not use prompt/alert', hint:'Use input fields and textContent updates.'},
+            {label:'invalid input handled', key:'invalid input', hint:'Show “invalid” for non-numeric or out-of-range.'},
+            {label:'selection logic works (high/low/win)', key:'selection logic', hint:'Compare guess vs secret and update feedback.'},
+            {label:'tries counter updates', key:'tries counter updates', hint:'Update #tries on valid guesses.'},
+            {label:'for-loop task complete', key:'for-loop task', hint:'Populate #hintList with 1–10 using a for loop.'},
+            {label:'while loop present in script.js', key:'contains a while loop', hint:'Include while(...) in your code to keep checking until correct.'}
           ];
+
           const icon = ok => ok ? '✅' : '❌';
           const out = [];
           out.push(`# Unit 8.4 Autograder Summary`);
@@ -267,9 +263,10 @@ jobs:
             if (!ok) out.push(`   - Hint: ${c.hint}`);
           }
           out.push(`\n### Reminders`);
-          out.push(`- Use input #guess and button calling runJS().`);
-          out.push(`- Update feedback via textContent in #feedback and increment #tries.`);
-          out.push(`- Use a for loop to fill #hintList with 1–10 (at load or first run).`);
+          out.push(`- One button calls runJS(): start → guess → win → reset.`);
+          out.push(`- Input #guess is disabled until start; disabled again after win.`);
+          out.push(`- Use a **for loop** for #hintList (1..10) and a **while loop** to keep checking guesses.`);
+          out.push(`- No prompt()/alert(); update the page with textContent.`);
           fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY, out.join('\n'));
           NODE
 

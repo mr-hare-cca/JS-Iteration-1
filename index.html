@@ -1,16 +1,15 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <title>JS | Variables and Methods</title>
-    <script src="script.js" defer></script>
+  <meta charset="UTF-8">
+  <title>Unit 8.4 – Iteration Guessing Game</title>
+  <script src="script.js" defer></script>
 </head>
 <body>
   <h1>Guess the Number (1–10)</h1>
 
-  <label>Enter your guess:</label>
-  <input id="guess" type="number" min="1" max="10">
-  <button onclick="runJS()">Guess</button>
+  <input id="guess" type="number" min="1" max="10" disabled>
+  <button onclick="runJS()">Start Game</button>
 
   <p id="feedback"></p>
   <p>Tries: <span id="tries">0</span></p>

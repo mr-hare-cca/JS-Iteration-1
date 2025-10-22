@@ -1,40 +1,59 @@
-// Simple one-function solution for Unit 8.4
-
-// Global state (persist across button clicks)
-var secret = Math.floor(Math.random() * 10) + 1; // 1..10
+var secret;
 var tries = 0;
-
-// Build the hint list ONCE at page load using a for loop.
-// <script defer> guarantees the DOM is ready when this runs.
-var hintListEl = document.getElementById("hintList");
-hintListEl.innerHTML = "";
-for (var i = 1; i <= 10; i++) {
-  hintListEl.innerHTML += "<li>" + i + "</li>";
-}
+var gameStarted = false;
 
 function runJS() {
+  var feedback = document.getElementById("feedback");
+  var triesDisplay = document.getElementById("tries");
+  var hintList = document.getElementById("hintList");
   var guessInput = document.getElementById("guess");
-  var feedbackEl = document.getElementById("feedback");
-  var triesEl = document.getElementById("tries");
+  var button = document.querySelector("button");
 
+  // --- Start the game if not started yet ---
+  if (!gameStarted) {
+    secret = Math.floor(Math.random() * 10) + 1;
+    tries = 0;
+    gameStarted = true;
+    feedback.textContent = "Game started! Enter a number 1–10.";
+    triesDisplay.textContent = tries;
+    button.textContent = "Guess";
+    guessInput.value = "";
+    guessInput.disabled = false; 
+
+    // Show hints using a for loop
+    hintList.innerHTML = "";
+    for (var i = 1; i <= 10; i++) {
+      hintList.innerHTML += "<li>" + i + "</li>";
+    }
+    return;
+  }
+
+  // --- Check the guess ---
   var guess = Number(guessInput.value);
-
-  // Validate: must be a number 1..10
   if (isNaN(guess) || guess < 1 || guess > 10) {
-    feedbackEl.textContent = "Invalid: enter a number 1–10.";
-    return; // do NOT increment tries on invalid
+    feedback.textContent = "Invalid input! Please enter a number 1–10.";
+    return;
   }
 
-  // Valid guess → increment tries
-  tries = tries + 1;
-  triesEl.textContent = String(tries);
+  // --- While loop: keep checking until correct ---
+  while (guess !== secret) {
+    tries++;
+    triesDisplay.textContent = tries;
 
-  // Selection logic
-  if (guess === secret) {
-    feedbackEl.textContent = "You win! The number was " + secret + ".";
-  } else if (guess > secret) {
-    feedbackEl.textContent = "Too high.";
-  } else {
-    feedbackEl.textContent = "Too low.";
+    if (guess > secret) {
+      feedback.textContent = "Too high! Try again.";
+    } else {
+      feedback.textContent = "Too low! Try again.";
+    }
+    return; // exit until they make a new guess
   }
+
+  // --- If correct, show win message and reset game ---
+  tries++;
+  triesDisplay.textContent = tries;
+  feedback.textContent = "🎉 You win! The number was " + secret + ". Starting a new game...";
+  gameStarted = false;
+  button.textContent = "Start New Game";
+  guessInput.value = "";
+  guessInput.disabled = true; 
 }
