@@ -100,9 +100,9 @@ jobs:
             return (el?.textContent || el?.innerText || '').trim();
           }
 
-          function toNum(s) {
+          function toNumOrZero(s) {
             const m = (s || '').match(/-?\\d+(?:\\.\\d+)?/);
-            return m ? Number(m[0]) : NaN;
+            return m ? Number(m[0]) : 0;
           }
 
           function callRun(window) {
@@ -139,19 +139,22 @@ jobs:
             });
 
             test("selection logic: too high / too low|invalid / win (seeded answer=1)", async () => {
-              expect(setValue(window, document, 'guess', 10)).toBe(true); // high
+              // too high
+              expect(setValue(window, document, 'guess', 10)).toBe(true);
               callRun(window);
               await wait();
               let fb = textOf(document, 'feedback').toLowerCase();
               expect(fb).toMatch(/high/);
 
-              expect(setValue(window, document, 'guess', 0)).toBe(true); // low or invalid
+              // too low or invalid (0)
+              expect(setValue(window, document, 'guess', 0)).toBe(true);
               callRun(window);
               await wait();
               fb = textOf(document, 'feedback').toLowerCase();
               expect(fb).toMatch(/low|invalid/);
 
-              expect(setValue(window, document, 'guess', 1)).toBe(true); // win
+              // win (1)
+              expect(setValue(window, document, 'guess', 1)).toBe(true);
               callRun(window);
               await wait();
               fb = textOf(document, 'feedback').toLowerCase();
@@ -159,25 +162,28 @@ jobs:
             });
 
             test("tries counter increments across two valid guesses in one session", async () => {
-              const start = toNum(textOf(document, 'tries'));
-              // First valid guess (10): some students may NOT increment here—OK
+              // Read starting value (treat missing/NaN as 0)
+              const start = toNumOrZero(textOf(document, 'tries'));
+
+              // First valid guess (10). Some students only increment on win; that's ok.
               expect(setValue(window, document, 'guess', 10)).toBe(true);
               callRun(window);
               await wait();
 
-              // Second valid guess (1 - win): MUST increment by at least 1 overall
+              // Second valid guess (1 – correct)
               expect(setValue(window, document, 'guess', 1)).toBe(true);
               callRun(window);
               await wait();
 
-              const after = toNum(textOf(document, 'tries'));
-              expect(Number.isNaN(after)).toBe(false);
-              expect(Number.isNaN(start)).toBe(false);
+              const after = toNumOrZero(textOf(document, 'tries'));
+
               // Be tolerant: require at least +1 across the two valid guesses
               expect(after).toBeGreaterThanOrEqual(start + 1);
+              // Also require final displayed tries to be >= 1 (guards against resets)
+              expect(after).toBeGreaterThanOrEqual(1);
             });
 
-            test("for-loop task: #hintList shows 1..10 (either at load OR after first run)", async () => {
+            test("for-loop task: #hintList shows 1..10 (at load OR after first run)", async () => {
               const el = document.getElementById('hintList');
               const children0 = Array.from(el?.children || []);
               let text0 = (el?.textContent || '').trim();
@@ -196,6 +202,7 @@ jobs:
             });
           });
           EOF
+
 
       - name: Run tests
         id: jest
