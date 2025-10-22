@@ -42,7 +42,7 @@ jobs:
           };
           EOF
 
-      - name: Create Jest tests (DOM-based; seeded randomness; strict checks)
+      - name: Create Jest tests (simple: one function runJS, no listeners)
         run: |
           mkdir -p __tests__
           cat > __tests__/guessing.test.cjs <<'EOF'
@@ -68,7 +68,7 @@ jobs:
             const baseUrl = 'file://' + baseDir.replace(/\\+/g, '/') + '/';
 
             const vconsole = new VirtualConsole();
-            vconsole.on('error', () => {}); // silence console.error from jsdom loading
+            vconsole.on('error', () => {}); // silence script load errors in logs
 
             const dom = await JSDOM.fromFile(indexPath, {
               url: baseUrl,
@@ -81,12 +81,9 @@ jobs:
             const { window } = dom;
 
             // Seed randomness so Math.floor(Math.random()*10)+1 === 1
-            Object.defineProperty(window.Math, 'random', {
-              value: () => 0,
-              writable: false
-            });
+            Object.defineProperty(window.Math, 'random', { value: () => 0, writable: false });
 
-            // Block prompt/alert usage (assignment requires inputs & textContent)
+            // Disallow prompt/alert (must use DOM + textContent)
             window.alert = () => { throw new Error('Use textContent, not alert().'); };
             window.prompt = () => { throw new Error('Use inputs, not prompt().'); };
 
@@ -95,12 +92,11 @@ jobs:
             return dom;
           }
 
-          function setValueAndEvents(window, document, id, val) {
+          function setValue(window, document, id, val) {
             const el = document.getElementById(id);
             if (!el) return false;
             el.value = String(val);
-            el.dispatchEvent(new window.Event('input', { bubbles: true }));
-            el.dispatchEvent(new window.Event('change', { bubbles: true }));
+            // No listeners required; tests will call runJS() directly
             return true;
           }
 
@@ -114,7 +110,7 @@ jobs:
             if (typeof window.runJS === 'function') window.runJS();
           }
 
-          describe("Unit 8.4 – Iteration Guessing Game", () => {
+          describe("Unit 8.4 – Iteration Guessing Game (simple)", () => {
             let dom, window, document;
 
             beforeEach(async () => {
@@ -131,73 +127,69 @@ jobs:
             });
 
             test("does not use prompt/alert (uses inputs + textContent)", () => {
-              // If the student calls alert/prompt, the overridden functions throw in beforeEach
+              // If prompt/alert were used, they'd throw in beforeEach
               expect(true).toBe(true);
             });
 
             test("invalid input shows an 'invalid' message in #feedback", async () => {
-              expect(setValueAndEvents(window, document, 'guess', 'abc')).toBe(true);
+              expect(setValue(window, document, 'guess', 'abc')).toBe(true);
               callRun(window);
               await wait();
               const fb = textOf(document, 'feedback').toLowerCase();
               expect(fb).toMatch(/invalid/);
             });
 
-            test("selection logic: too low / too high / win (seeded answer=1)", async () => {
-              // too high (guess 10 vs answer 1)
-              expect(setValueAndEvents(window, document, 'guess', 10)).toBe(true);
+            test("selection logic: too high / too low|invalid / win (seeded answer=1)", async () => {
+              // too high (10 vs 1)
+              expect(setValue(window, document, 'guess', 10)).toBe(true);
               callRun(window);
               await wait();
               let fb = textOf(document, 'feedback').toLowerCase();
               expect(fb).toMatch(/high/);
 
-              // too low (guess 0 vs answer 1) – some will treat <1 as invalid; allow low OR invalid
-              expect(setValueAndEvents(window, document, 'guess', 0)).toBe(true);
+              // too low (0 vs 1) - allow 'low' or 'invalid'
+              expect(setValue(window, document, 'guess', 0)).toBe(true);
               callRun(window);
               await wait();
               fb = textOf(document, 'feedback').toLowerCase();
               expect(fb).toMatch(/low|invalid/);
 
-              // win (guess 1)
-              expect(setValueAndEvents(window, document, 'guess', 1)).toBe(true);
+              // win (1)
+              expect(setValue(window, document, 'guess', 1)).toBe(true);
               callRun(window);
               await wait();
               fb = textOf(document, 'feedback').toLowerCase();
               expect(fb).toMatch(/win|correct|you.*got/i);
             });
 
-            test("tries counter increments on each valid guess", async () => {
-              // Reload to normalize starting state
+            test("tries counter increments on valid guesses", async () => {
+              // Reset DOM
               dom = await loadDOM();
               window = dom.window;
               document = window.document;
 
-              // initial (extract first number or assume 0)
-              let triesTxt = textOf(document, 'tries');
               const toNum = s => Number((s.match(/-?\\d+(?:\\.\\d+)?/)||[])[0]);
-              const initial = isNaN(toNum(triesTxt)) ? 0 : toNum(triesTxt);
+              const start = toNum(textOf(document, 'tries')) || 0;
 
-              // two valid guesses (10 -> high, 1 -> win)
-              expect(setValueAndEvents(window, document, 'guess', 10)).toBe(true);
+              // Two valid guesses: 10 (high), 1 (win)
+              expect(setValue(window, document, 'guess', 10)).toBe(true);
               callRun(window);
               await wait();
-              expect(setValueAndEvents(window, document, 'guess', 1)).toBe(true);
+              expect(setValue(window, document, 'guess', 1)).toBe(true);
               callRun(window);
               await wait();
 
-              triesTxt = textOf(document, 'tries');
-              const after = isNaN(toNum(triesTxt)) ? initial : toNum(triesTxt);
-              expect(after).toBeGreaterThan(initial);
+              const after = toNum(textOf(document, 'tries')) || 0;
+              expect(after).toBeGreaterThan(start);
             });
 
-            test("for-loop task: #hintList shows numbers 1..10 (e.g., 10 items)", () => {
+            test("for-loop task: #hintList shows numbers 1..10 (10 items or text containing 1..10)", () => {
               const el = document.getElementById('hintList');
-              // Accept either a list of 10 children or text that includes 1..10
-              const children = Array.from(el?.children || []);
-              const text = (el?.textContent || '').trim();
-              const hasTenChildren = children.length >= 10;
-              const numbersFound = (text.match(/\\b(?:10|[1-9])\\b/g) || []).length >= 10;
-              expect(hasTenChildren || numbersFound).toBe(true);
+              const kids = Array.from(el?.children || []);
+              const txt = (el?.textContent || '').trim();
+              const hasTen = kids.length >= 10;
+              const found = (txt.match(/\\b(?:10|[1-9])\\b/g) || []).length >= 10;
+              expect(hasTen || found).toBe(true);
             });
           });
           EOF
@@ -225,23 +217,17 @@ jobs:
           const passed = r.numPassedTests ?? 0;
           const failed = r.numFailedTests ?? 0;
           const runtimeErrSuites = r.numRuntimeErrorTestSuites ?? 0;
-
           const all = (r.testResults || []).flatMap(tr => tr.assertionResults || []);
           const textOf = ar => (ar.title || ar.fullName || '').toLowerCase();
-
-          // Match by keyword so minor title tweaks don't break the summary
-          function passedByKeyword(keyword) {
-            keyword = keyword.toLowerCase();
-            return all.some(ar => textOf(ar).includes(keyword) && ar.status === 'passed');
-          }
+          const passedByKeyword = kw => all.some(ar => textOf(ar).includes(kw.toLowerCase()) && ar.status==='passed');
 
           const checks = [
-            {label: 'has required elements',                   keyword: 'has required elements', hint: 'Include #guess, #feedback, #tries, #hintList.'},
+            {label: 'has required elements', keyword: 'has required elements', hint: 'Include #guess, #feedback, #tries, #hintList.'},
             {label: 'no prompt/alert (uses inputs & textContent)', keyword: 'does not use prompt/alert', hint: 'Use input fields and textContent updates.'},
-            {label: 'invalid input handled',                   keyword: 'invalid input',          hint: 'Show an “invalid” message for non-numeric or out-of-range.'},
-            {label: 'selection logic works (low/high/win)',    keyword: 'selection logic',        hint: 'Compare guess vs answer and update feedback accordingly.'},
-            {label: 'tries counter increments',                keyword: 'tries counter',          hint: 'Increase visible tries on each valid guess.'},
-            {label: 'for-loop task complete',                  keyword: 'for-loop task',          hint: 'Populate #hintList with 1..10 using a for loop.'}
+            {label: 'invalid input handled', keyword: 'invalid input', hint: 'Show an “invalid” message for non-numeric or out-of-range.'},
+            {label: 'selection logic works (low/high/win)', keyword: 'selection logic', hint: 'Compare guess vs answer and update feedback accordingly.'},
+            {label: 'tries counter increments', keyword: 'tries counter', hint: 'Increase visible tries on each valid guess.'},
+            {label: 'for-loop task complete', keyword: 'for-loop task', hint: 'Populate #hintList with 1..10 using a for loop.'}
           ];
 
           const checkIcon = ok => (ok ? '✅' : '❌');
@@ -255,20 +241,17 @@ jobs:
           }
           out.push('');
           out.push('## What you got right / need to fix');
-
           for (const {label, keyword, hint} of checks) {
             const ok = passedByKeyword(keyword);
             out.push(`${checkIcon(ok)} ${label}`);
             if (!ok) out.push(`   - Hint: ${hint}`);
           }
-
           out.push('');
           out.push('### Reminders');
           out.push('- Use an input with id **guess** and a button that calls `runJS()`.');
           out.push('- Update feedback via `textContent` in **#feedback** and keep a tries count in **#tries**.');
           out.push('- Use a **for loop** to fill **#hintList** with 1..10.');
           out.push('- No `prompt()` or `alert()`—use the page UI.');
-
           fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY, out.join('\n'));
           NODE
 
@@ -281,7 +264,6 @@ jobs:
           const total  = r.numTotalTests ?? 0;
           const failed = r.numFailedTests ?? 0;
           const runtimeErrSuites = r.numRuntimeErrorTestSuites ?? 0;
-
           if (failed > 0 || runtimeErrSuites > 0 || total === 0) {
             console.error('Failing job: failedTests=' + failed + ', runtimeErrorSuites=' + runtimeErrSuites + ', totalTests=' + total);
             process.exit(1);
@@ -290,4 +272,3 @@ jobs:
             process.exit(0);
           }
           NODE
-
