@@ -26,7 +26,7 @@ function runJS() {
   }
 
   // Valid guess → increment tries
-//   tries = tries + 1;
+  tries = tries + 1;
   triesEl.textContent = String(tries);
 
   // Selection logic
